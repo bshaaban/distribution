@@ -422,11 +422,9 @@ func New(params DriverParameters) (*Driver, error) {
 	awsConfig.WithDisableSSL(!params.Secure)
 
 	if params.UserAgent != "" || params.SkipVerify {
-		httpTransport := http.DefaultTransport
+		httpTransport := http.DefaultTransport.(*http.Transport).Clone()
 		if params.SkipVerify {
-			httpTransport = &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			}
+			httpTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 		}
 		if params.UserAgent != "" {
 			awsConfig.WithHTTPClient(&http.Client{
