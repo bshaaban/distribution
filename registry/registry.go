@@ -218,8 +218,12 @@ func (registry *Registry) ListenAndServe() error {
 				dcontext.GetLogger(registry.app).Debugf("CA Subject: %s", string(subj))
 			}
 
-			tlsConf.ClientAuth = tls.RequireAndVerifyClientCert
+			// If `VerifyClientCertIfGIven` is used, then the verifyClientCertWithExemptions()
+			// handler must wrap all other handlers so that every request is verified for
+			// client cert by this handler, except the ones that are explicitly exempted in it.
+			tlsConf.ClientAuth = tls.VerifyClientCertIfGiven
 			tlsConf.ClientCAs = pool
+			registry.server.Handler = verifyClientCertWithExemptions(registry.server.Handler)
 		}
 
 		ln = tls.NewListener(ln, tlsConf)
@@ -426,4 +430,29 @@ func nextProtos(config *configuration.Configuration) []string {
 	default:
 		return []string{"h2", "http/1.1"}
 	}
+}
+
+// verifyClientCertWithExemptions is a handler wrapper that checks that the
+// client cert was provided and successfully verified for every request.
+// The requests that are explicitly exempted do not have to go through this check.
+func verifyClientCertWithExemptions(handler http.Handler) http.Handler {
+	type key struct{ method, path string }
+
+	exempted := map[key]bool{
+		{"HEAD", "/"}: true,
+		{"GET", "/"}:  true,
+	}
+
+	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if !exempted[key{r.Method, r.URL.Path}] {
+			if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 {
+				rw.WriteHeader(http.StatusBadRequest)
+				_, _ = rw.Write([]byte("tls: client certificate required"))
+				return
+			}
+		}
+
+		// Pass through.
+		handler.ServeHTTP(rw, r)
+	})
 }
